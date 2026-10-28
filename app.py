@@ -1,37 +1,34 @@
-import streamlit as st
-import requests
+from fastapi import FastAPI
+from pydantic import BaseModel
+import joblib
+import numpy as np
 
-st.title("🎓 Predicción de Aprobación de Estudiantes (MLP)")
+app = FastAPI()
 
-st.write("Ingrese los datos del estudiante para consultar la predicción:")
+# Cargar archivos del modelo generados en Colab
+scaler = joblib.load('scaler.pkl')
+model = joblib.load('mlp_model.pkl')
 
-tareas = st.slider("Calificación Tareas (0-100)", 0.0, 100.0, 75.0)
-examenes = st.slider("Calificación Exámenes (0-100)", 0.0, 100.0, 70.0)
-asistencia = st.slider("Asistencia (%)", 0.0, 100.0, 85.0)
-estudio = st.number_input("Horas de Estudio Semanales", 0.0, 50.0, 10.0)
-sueno = st.number_input("Horas de Sueño Diarias", 0.0, 12.0, 7.0)
-extracurriculares = st.selectbox("¿Participa en actividades extracurriculares?", [0, 1], format_func=lambda x: "Sí" if x == 1 else "No")
+class StudentFeatures(BaseModel):
+    Tareas: float
+    Examenes: float
+    Asistencia: float
+    Estudio_Horas: float
+    Sueno_Horas: float
+    Extracurriculares: int
 
-# URL de tu end-point desplegado (remplaza con tu URL real cuando despliegues)
-API_URL = "https://tu-servicio.onrender.com/predict" 
-
-if st.button("Predecir Aprobación"):
-    payload = {
-        "Tareas": tareas,
-        "Examenes": examenes,
-        "Asistencia": asistencia,
-        "Estudio_Horas": estudio,
-        "Sueno_Horas": sueno,
-        "Extracurriculares": extracurriculares
-    }
+@app.post("/predict")
+def predict_approval(data: StudentFeatures):
+    input_data = np.array([[
+        data.Tareas, data.Examenes, data.Asistencia,
+        data.Estudio_Horas, data.Sueno_Horas, data.Extracurriculares
+    ]])
+    scaled_data = scaler.transform(input_data)
+    prediction = model.predict(scaled_data)[0]
+    probability = model.predict_proba(scaled_data)[0][1]
     
-    try:
-        response = requests.post(API_URL, json=payload)
-        res_data = response.json()
-        
-        if res_data["aprobado"] == 1:
-            st.success(f"Resultado: **{res_data['estado']}** (Probabilidad: {res_data['probabilidad_aprobacion']*100:.1f}%)")
-        else:
-            st.error(f"Resultado: **{res_data['estado']}** (Probabilidad: {res_data['probabilidad_aprobacion']*100:.1f}%)")
-    except Exception as e:
-        st.error(f"Error al conectar con el End-point: {e}")
+    return {
+        "aprobado": int(prediction),
+        "estado": "Aprobado" if prediction == 1 else "Reprobado",
+        "probabilidad_aprobacion": round(float(probability), 4)
+    }
